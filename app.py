@@ -1,4 +1,5 @@
 import json
+import time
 import urllib.parse
 import streamlit as st
 from google import genai
@@ -101,14 +102,28 @@ def analyze_food_with_ai(image: Image.Image, key: str) -> dict:
         '"recommendation_ta": "தானம் (Food Donation) அல்லது உடனடி பயன்பாடு அல்லது உரம் (Composting) பற்றிய தமிழில் பரிந்துரை"}'
     )
 
-    response = client.models.generate_content(
-        model="gemini-3.8-flash",
-        contents=[image, prompt],
-        config={"response_mime_type": "application/json"},
-    )
+    models_to_try = ["gemini-3.8-flash", "gemini-flash-latest"]
+    last_error = None
 
-    raw_text = (response.text or "").strip()
-    return json.loads(raw_text)
+    for model_name in models_to_try:
+        for attempt in range(3):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=[image, prompt],
+                    config={"response_mime_type": "application/json"},
+                )
+                raw_text = (response.text or "").strip()
+                return json.loads(raw_text)
+            except Exception as exc:
+                last_error = exc
+                err_str = str(exc)
+                if "503" in err_str or "UNAVAILABLE" in err_str or "429" in err_str:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                break
+
+    raise last_error if last_error else RuntimeError("AI analysis failed")
 
 
 if uploaded_file is not None:
