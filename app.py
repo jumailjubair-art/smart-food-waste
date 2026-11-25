@@ -1,55 +1,117 @@
+import json
 import streamlit as st
-import cv2
-import numpy as np
+from google import genai
 from PIL import Image
 
 st.set_page_config(
     page_title="AI Smart Food Waste & Donation System",
     page_icon="🍲",
-    layout="centered"
+    layout="centered",
 )
 
 st.title("🍲 AI Smart Food Waste & Donation System")
-st.markdown("**பெஸ்ட் ப்ரோஸ் கூட்டணி** சார்பாக உணவுப் பொருள்களின் தரத்தை (Freshness) HSV கலர் மாஸ்கிங் மூலம் பகுப்பாய்வு செய்யும் தளம்! 🚀")
+st.markdown(
+    "**பெஸ்ட் ப்ரோஸ் கூட்டணி** சார்பாக உணவுப் பொருள்களின் தரத்தை (Freshness) "
+    "**Gemini AI Recognition** மூலம் பகுப்பாய்வு செய்யும் தளம்! 🚀"
+)
 st.divider()
 
-st.header("📸 உணவுப் படம் மற்றும் ஃபிரெஷ்னஸ் பரிசோதனை")
-st.write("உணவுப் படத்தின் படத்தை இங்கே பதிவேற்றவும் (JPG/PNG)")
+st.header("📸 உணவுப் படம் மற்றும் AI ஃபிரெஷ்னஸ் பரிசோதனை")
+st.write("உணவுப் பொருளின் படத்தை இங்கே பதிவேற்றவும் (JPG/PNG)")
 
 uploaded_file = st.file_uploader("Upload", type=["jpg", "jpeg", "png"])
 
-def analyze_freshness(image):
-    img_rgb = np.array(image.convert("RGB"))
-    hsv = cv2.cvtColor(img_rgb, cv2.COLOR_RGB2HSV)
 
-    lower_fresh = np.array([25, 45, 50])
-    upper_fresh = np.array([90, 255, 255])
-    fresh_mask = cv2.inRange(hsv, lower_fresh, upper_fresh)
+def get_api_key():
+    try:
+        if "GEMINI_API_KEY" in st.secrets and st.secrets["GEMINI_API_KEY"]:
+            return st.secrets["GEMINI_API_KEY"]
+    except Exception:
+        pass
+    return st.session_state.get("temp_gemini_api_key", "")
 
-    fresh_pixels = cv2.countNonZero(fresh_mask)
-    total_pixels = hsv.shape[0] * hsv.shape[1]
 
-    if total_pixels == 0:
-        return 0.0
+api_key = get_api_key()
 
-    score = (fresh_pixels / total_pixels) * 100.0
-    return round(min(100.0, max(0.0, score)), 2)
+if not api_key:
+    with st.expander("🔑 Gemini API Key அமைப்பு (Optional / தற்காலிக சோதனைக்கு)"):
+        entered_key = st.text_input(
+            "உங்கள் Gemini API Key-ஐ உள்ளிடவும்",
+            type="password",
+            help="Streamlit Secrets-ல் GEMINI_API_KEY அமைத்திருந்தால் தானாக எடுத்துக்கொள்ளும்.",
+        )
+        if entered_key:
+            st.session_state["temp_gemini_api_key"] = entered_key
+            api_key = entered_key
+
+
+def analyze_food_with_ai(image: Image.Image, key: str) -> dict:
+    client = genai.Client(api_key=key)
+
+    prompt = (
+        "You are a food quality and safety AI assistant. Analyze the uploaded image. "
+        "1. Identify what food item (or non-food item) is shown. "
+        "2. Evaluate its freshness without relying on green color pixels alone—inspect texture, "
+        "spoilage signs, mold, discoloration, wilting, or curdling/drying. "
+        "3. Return ONLY valid JSON with these exact keys: "
+        '{"food_name_ta": "தமிழில் உணவுப் பெயர்", '
+        '"freshness_score": 0 to 100 number, '
+        '"status": "FRESH" or "MODERATE" or "SPOILED", '
+        '"conclusion_ta": "தமிழில் சுருக்கமான முடிவு", '
+        '"recommendation_ta": "தானம் (Food Donation) அல்லது உடனடி பயன்பாடு அல்லது உரம் (Composting) பற்றிய தமிழில் பரிந்துரை"}'
+    )
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=[image, prompt],
+        config={"response_mime_type": "application/json"},
+    )
+
+    raw_text = (response.text or "").strip()
+    return json.loads(raw_text)
+
 
 if uploaded_file is not None:
-    image = Image.open(uploaded_file)
+    image = Image.open(uploaded_file).convert("RGB")
     st.image(image, caption="பதிவேற்றப்பட்ட உணவுப் படம்", use_container_width=True)
 
-    score = analyze_freshness(image)
-
-    st.subheader("AI பகுப்பாய்வு முடிவு (Analysis)")
-    st.markdown(f"🟢 **Freshness Score:** `{score:.2f}%`")
-
-    if score >= 35.0:
-        st.success("✅ **முடிவு: உணவு நல்ல நிலையில் (Fresh) உள்ளது!**")
-        st.info("👉 **பரிந்துரை:** இந்த உணவை நல்ல முறையில் பயன்படுத்தலாம் அல்லது உணவு தான மையத்திற்கு (Food Donation) வழங்கலாம்! 🤝🍲")
+    if not api_key:
+        st.error(
+            "⚠️ **GEMINI_API_KEY கிடைக்கவில்லை!** Streamlit Secrets-ல் `GEMINI_API_KEY` "
+            "சேர்க்கவும் அல்லது மேலே உள்ள 'Gemini API Key அமைப்பு' பகுதியில் தற்காலிகமாக உள்ளிடவும்."
+        )
     else:
-        st.warning("⚠️ **முடிவு: உணவு கெட்டுப்போகும் நிலையில் உள்ளது அல்லது பழுத்துவிட்டது!**")
-        st.info("👉 **பரிந்துரை:** மனித பயன்பாட்டிற்கு உகந்தது அல்ல. இதை உரம் தயாரிக்க (Composting) அனுப்பலாம்! 🌱")
+        with st.spinner("🤖 Gemini AI உணவுப் படத்தை அடையாளம் கண்டு பகுப்பாய்வு செய்கிறது..."):
+            try:
+                result = analyze_food_with_ai(image, api_key)
+
+                food_name = result.get("food_name_ta", "உணவுப் பொருள்")
+                score = float(result.get("freshness_score", 0.0))
+                score = max(0.0, min(100.0, score))
+                status = str(result.get("status", "SPOILED")).upper()
+                conclusion = result.get(
+                    "conclusion_ta", "உணவுத் தரம் பரிசோதிக்கப்பட்டது."
+                )
+                recommendation = result.get(
+                    "recommendation_ta", "பாதுகாப்பான முறையில் கையாளவும்."
+                )
+
+                st.subheader("🤖 AI பகுப்பாய்வு முடிவு (Gemini Vision)")
+                st.markdown(f"🍽️ **அடையாளம் காணப்பட்ட பொருள்:** `{food_name}`")
+                st.markdown(f"📊 **AI Freshness Score:** `{score:.1f}%`")
+
+                if status == "FRESH" or score >= 60.0:
+                    st.success(f"✅ **முடிவு:** {conclusion}")
+                    st.info(f"👉 **பரிந்துரை:** {recommendation} 🤝🍲")
+                elif status == "MODERATE" or score >= 30.0:
+                    st.warning(f"⚠️ **முடிவு:** {conclusion}")
+                    st.info(f"👉 **பரிந்துரை:** {recommendation}")
+                else:
+                    st.error(f"⚠️ **முடிவு:** {conclusion}")
+                    st.info(f"👉 **பரிந்துரை:** {recommendation} 🌱")
+
+            except Exception as e:
+                st.error(f"❌ AI பகுப்பாய்வில் பிழை ஏற்பட்டது: {e}")
 else:
     st.info("💡 மேலே உள்ள பட்டனைப் பயன்படுத்தி ஒரு உணவுப் படத்தை அப்லோட் செய்யவும் ப்ரோ!")
 
