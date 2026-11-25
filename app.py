@@ -1,4 +1,5 @@
 import json
+import urllib.parse
 import streamlit as st
 from google import genai
 from PIL import Image
@@ -15,6 +16,45 @@ st.markdown(
     "**Gemini AI Recognition** மூலம் பகுப்பாய்வு செய்யும் தளம்! 🚀"
 )
 st.divider()
+
+# அருகிலுள்ள ஆசரமம் / தானம் தொடர்புப் பட்டியல் (உங்கள் பகுதிக்கு ஏற்ப மாற்றிக் கொள்ளலாம்)
+DONATION_CONTACTS = [
+    {
+        "name_ta": "அருகிலுள்ள முதியோர் இல்லம் / ஆசரமம் (மாதிரி)",
+        "area_ta": "உங்கள் பகுதி / அருகிலுள்ள நகரம்",
+        "phone": "உங்கள் தொடர்பு எண்ணை இங்கே சேர்க்கவும்",
+        "map_query": "Ashram old age home food donation near me",
+    },
+    {
+        "name_ta": "உணவு தானம் & ஆதரவற்றோர் இல்லம் (மாதிரி)",
+        "area_ta": "உங்கள் பகுதி / அருகிலுள்ள நகரம்",
+        "phone": "உங்கள் தொடர்பு எண்ணை இங்கே சேர்க்கவும்",
+        "map_query": "Orphanage food bank donation near me",
+    },
+]
+
+
+def render_donation_section(highlight_fresh: bool = False):
+    st.subheader("🤝 அருகிலுள்ள ஆசரமம் & உணவு தானத் தொடர்புகள்")
+    if highlight_fresh:
+        st.success(
+            "🍲 உணவு நல்ல தரத்தில் இருப்பதால், அருகிலுள்ள ஆசரமம் அல்லது தான அமைப்புகளைத் "
+            "தொடர்பு கொண்டு பாதுகாப்பாக வழங்கலாம்!"
+        )
+    else:
+        st.caption(
+            "உணவு தானம் தொடர்பான விரைவுத் தகவல் மற்றும் Google Maps தேடல் இணைப்புகள்:"
+        )
+
+    for idx, item in enumerate(DONATION_CONTACTS, start=1):
+        encoded_q = urllib.parse.quote_plus(item["map_query"])
+        maps_url = f"https://www.google.com/maps/search/?api=1&query={encoded_q}"
+        with st.container(border=True):
+            st.markdown(f"**{idx}. {item['name_ta']}**")
+            st.markdown(f"📍 **பகுதி:** `{item['area_ta']}`")
+            st.markdown(f"📞 **தொடர்பு எண்:** `{item['phone']}`")
+            st.markdown(f"🗺️ [Google Maps-ல் அருகிலுள்ள இடங்களைத் தேடவும்]({maps_url})")
+
 
 st.header("📸 உணவுப் படம் மற்றும் AI ஃபிரெஷ்னஸ் பரிசோதனை")
 st.write("உணவுப் பொருளின் படத்தை இங்கே பதிவேற்றவும் (JPG/PNG)")
@@ -62,7 +102,7 @@ def analyze_food_with_ai(image: Image.Image, key: str) -> dict:
     )
 
     response = client.models.generate_content(
-        model="gemini-2.5-flash",
+        model="gemini-3.8-flash",
         contents=[image, prompt],
         config={"response_mime_type": "application/json"},
     )
@@ -100,7 +140,8 @@ if uploaded_file is not None:
                 st.markdown(f"🍽️ **அடையாளம் காணப்பட்ட பொருள்:** `{food_name}`")
                 st.markdown(f"📊 **AI Freshness Score:** `{score:.1f}%`")
 
-                if status == "FRESH" or score >= 60.0:
+                is_fresh = status == "FRESH" or score >= 60.0
+                if is_fresh:
                     st.success(f"✅ **முடிவு:** {conclusion}")
                     st.info(f"👉 **பரிந்துரை:** {recommendation} 🤝🍲")
                 elif status == "MODERATE" or score >= 30.0:
@@ -110,10 +151,15 @@ if uploaded_file is not None:
                     st.error(f"⚠️ **முடிவு:** {conclusion}")
                     st.info(f"👉 **பரிந்துரை:** {recommendation} 🌱")
 
+                st.divider()
+                render_donation_section(highlight_fresh=is_fresh)
+
             except Exception as e:
                 st.error(f"❌ AI பகுப்பாய்வில் பிழை ஏற்பட்டது: {e}")
 else:
     st.info("💡 மேலே உள்ள பட்டனைப் பயன்படுத்தி ஒரு உணவுப் படத்தை அப்லோட் செய்யவும் ப்ரோ!")
+    st.divider()
+    render_donation_section(highlight_fresh=False)
 
 st.divider()
 st.caption("Developed with ❤️ by Best Bros (Jumail & AI)")
