@@ -2,7 +2,6 @@ import io
 import json
 import re
 import time
-import urllib.parse
 import streamlit as st
 import streamlit.components.v1 as components
 from google import genai
@@ -20,16 +19,6 @@ st.markdown(
     "**Gemini AI Recognition** மூலம் பகுப்பாய்வு செய்யும் தளம்! 🚀"
 )
 st.divider()
-
-def build_maps_url(query_text: str, gps_coords=None, area_text: str = '') -> str:
-    if gps_coords:
-        lat, lon = gps_coords
-        full_query = f"{query_text} near {lat:.6f},{lon:.6f}"
-    elif area_text.strip():
-        full_query = f"{query_text} near {area_text.strip()}"
-    else:
-        full_query = f"{query_text} near me"
-    return f"https://www.google.com/maps/search/?api=1&query={urllib.parse.quote_plus(full_query)}"
 
 GPS_SCRIPT_TEMPLATE = '''
 <script>
@@ -51,7 +40,7 @@ GPS_SCRIPT_TEMPLATE = '''
             const lat = pos.coords.latitude.toFixed(6);
             const lon = pos.coords.longitude.toFixed(6);
             statusEl.style.color = "#15803d";
-            statusEl.innerText = "✅ GPS கிடைத்தது (" + lat + ", " + lon + "). பக்கத்தை ஒருமுறை ரீஃப்ரெஷ் செய்து AI பரிந்துரையைப் பாருங்கள்!";
+            statusEl.innerText = "✅ GPS கிடைத்தது (" + lat + ", " + lon + "). பக்கத்தை ஒருமுறை ரீஃப்ரெஷ் செய்து அருகிலுள்ள தொடர்புகளைப் பாருங்கள்!";
             try {
                 const parentUrl = new URL(window.parent.location.href);
                 parentUrl.searchParams.set("lat", lat);
@@ -80,7 +69,7 @@ def get_api_key():
         pass
     return st.session_state.get("temp_gemini_api_key", "")
 
-def generate_ai_surrounding_places(api_key: str, gps_coords=None, area_text: str = '', food_name: str = '', is_fresh: bool = False) -> dict:
+def generate_ai_surrounding_contacts(api_key: str, gps_coords=None, area_text: str = '', food_name: str = '', is_fresh: bool = False) -> dict:
     client = get_genai_client(key=api_key)
     if gps_coords:
         lat, lon = gps_coords
@@ -98,12 +87,13 @@ def generate_ai_surrounding_places(api_key: str, gps_coords=None, area_text: str
     prompt = (
         "CRITICAL LANGUAGE RULE: Write EVERY text field strictly in natural Tamil script (தமிழ்). "
         "Do not use Hindi or other Indian languages. "
-        f"Based on {loc_desc} and {food_context}, suggest practical surrounding place categories and tips "
-        "where surplus food can be donated or handled responsibly (such as nearby old age homes/ashrams, "
-        "orphanages/children homes, community food banks/shelters, or composting/organic waste centers if spoiled). "
-        "Do NOT invent fake phone numbers or fake street addresses. "
-        "Return ONLY valid JSON with keys: region_summary_ta (string), places (list of objects with keys: "
-        "title_ta, category_ta, guidance_ta, maps_search_query)."
+        f"Based on {loc_desc} and {food_context}, suggest surrounding food donation contacts/organizations, "
+        "ashrams, old age homes, orphanages, or community food banks around the user's surroundings. "
+        "IMPORTANT: Do NOT invent fake phone numbers or fake street addresses. Where real contact details need to be verified or added, "
+        "clearly write 'நேரடியாகத் தொடர்பு கொண்டு உறுதி செய்யவும் / உங்கள் தொடர்பு எண்ணைச் சேர்க்கவும்' instead of any made-up number. "
+        'Do NOT include any map links or map search queries.\n'
+        "Return ONLY valid JSON with keys: region_summary_ta (string), contacts (list of objects with keys: "
+        "organization_ta, category_ta, area_note_ta, contact_info_ta, donation_note_ta)."
     )
 
     dynamic_models = []
@@ -145,26 +135,26 @@ def generate_ai_surrounding_places(api_key: str, gps_coords=None, area_text: str
                     time.sleep(0.5 * (attempt + 1))
                     continue
                 break
-    raise last_error if last_error else RuntimeError("AI surrounding search failed")
+    raise last_error if last_error else RuntimeError("AI surrounding contacts failed")
 
 def render_donation_section(highlight_fresh: bool = False, food_name: str = ''):
-    st.subheader("🤝 GPS + AI சுற்றியுள்ள தானம் & ஆசரம இடங்கள்")
+    st.subheader("🤝 GPS + AI சுற்றியுள்ள தானம் & ஆசரமத் தொடர்புகள்")
     if highlight_fresh:
         st.success(
-            "🍲 உணவு நல்ல தரத்தில் இருப்பதால், உங்கள் GPS சுற்றளவில் உள்ள ஆசரமம் அல்லது தான அமைப்புகளைத் "
-            "தொடர்பு கொண்டு பாதுகாப்பாக வழங்கலாம்!"
+            "🍲 உணவு நல்ல தரத்தில் இருப்பதால், உங்கள் GPS சுற்றளவில் உள்ள ஆசரமம் அல்லது தான அமைப்புகளின் "
+            "தொடர்பு விவரங்களைப் பார்த்து பாதுகாப்பாக வழங்கலாம்!"
         )
     else:
         st.caption(
-            "உங்கள் GPS இருப்பிடத்தை அடிப்படையாகக் கொண்டு AI பரிந்துரைக்கும் சுற்றியுள்ள இடங்கள்:"
+            "உங்கள் GPS இருப்பிடத்தை அடிப்படையாகக் கொண்டு AI காட்டும் சுற்றியுள்ள தொடர்பு விவரங்கள்:"
         )
 
     if "gps_coords" not in st.session_state:
         st.session_state["gps_coords"] = None
     if "manual_area_query" not in st.session_state:
         st.session_state["manual_area_query"] = ""
-    if "ai_places_cache" not in st.session_state:
-        st.session_state["ai_places_cache"] = {}
+    if "ai_contacts_cache" not in st.session_state:
+        st.session_state["ai_contacts_cache"] = {}
 
     col_gps, col_clear = st.columns([2, 1])
     with col_gps:
@@ -173,7 +163,7 @@ def render_donation_section(highlight_fresh: bool = False, food_name: str = ''):
         if st.session_state["gps_coords"] is not None:
             if st.button("🔄 GPS நீக்கு", use_container_width=True):
                 st.session_state["gps_coords"] = None
-                st.session_state["ai_places_cache"] = {}
+                st.session_state["ai_contacts_cache"] = {}
                 st.rerun()
 
     if request_gps:
@@ -204,67 +194,81 @@ def render_donation_section(highlight_fresh: bool = False, food_name: str = ''):
     loc_key = f"{gps_coords}_{manual_area.strip()}_{food_name}_{highlight_fresh}"
 
     if not api_key:
-        st.warning("🔑 AI மூலம் சுற்றியுள்ள இடங்களைக் காட்ட GEMINI_API_KEY தேவை.")
-        fallback_queries = [
-            ("அருகிலுள்ள முதியோர் இல்லம் / ஆசரமம்", "Ashram old age home food donation"),
-            ("உணவு தானம் & ஆதரவற்றோர் இல்லம்", "Orphanage food bank donation"),
+        st.warning("🔑 AI மூலம் சுற்றியுள்ள தொடர்புகளைக் காட்ட GEMINI_API_KEY தேவை.")
+        fallback_contacts = [
+            (
+                "அருகிலுள்ள முதியோர் இல்லம் / ஆசரமத் தொடர்பு",
+                "முதியோர் இல்லம் & ஆசரமம்",
+                "உங்கள் சுற்றியுள்ள பகுதி",
+                "உங்கள் தொடர்பு எண்ணைச் சேர்க்கவும் / நேரடியாகத் தொடர்பு கொள்ளவும்",
+            ),
+            (
+                "உணவு தானம் & ஆதரவற்றோர் இல்லத் தொடர்பு",
+                "உணவு தான அமைப்பு",
+                "உங்கள் சுற்றியுள்ள பகுதி",
+                "உங்கள் தொடர்பு எண்ணைச் சேர்க்கவும் / நேரடியாகத் தொடர்பு கொள்ளவும்",
+            ),
         ]
-        for idx, (label_ta, q_str) in enumerate(fallback_queries, start=1):
-            maps_url = build_maps_url(q_str, gps_coords=gps_coords, area_text=manual_area)
+        for idx, (org_ta, cat_ta, area_n, info_ta) in enumerate(fallback_contacts, start=1):
             with st.container(border=True):
-                st.markdown(f"**{idx}. {label_ta}**")
-                st.markdown(f"🗺️ [Google Maps-ல் அருகிலுள்ள இடங்களைத் தேடவும்]({maps_url})")
+                st.markdown(f"**{idx}. {org_ta}**")
+                st.markdown(f"🏷️ **வகை:** `{cat_ta}`")
+                st.markdown(f"📍 **பகுதி:** `{area_n}`")
+                st.markdown(f"📞 **தொடர்பு விவரம்:** `{info_ta}`")
         return
 
-    if loc_key not in st.session_state["ai_places_cache"]:
-        with st.spinner("🤖 GPS அடிப்படையில் சுற்றியுள்ள இடங்களை AI கண்டறிகிறது..."):
+    if loc_key not in st.session_state["ai_contacts_cache"]:
+        with st.spinner("🤖 GPS அடிப்படையில் சுற்றியுள்ள தொடர்புகளை AI தேடுகிறது..."):
             try:
-                ai_places_data = generate_ai_surrounding_places(
+                ai_contacts_data = generate_ai_surrounding_contacts(
                     api_key=api_key,
                     gps_coords=gps_coords,
                     area_text=manual_area,
                     food_name=food_name,
                     is_fresh=highlight_fresh,
                 )
-                st.session_state["ai_places_cache"][loc_key] = ai_places_data
+                st.session_state["ai_contacts_cache"][loc_key] = ai_contacts_data
             except Exception as e:
-                st.error(f"❌ AI சுற்றளவு பரிந்துரையில் பிழை: {e}")
+                st.error(f"❌ AI தொடர்புத் தேடலில் பிழை: {e}")
                 return
 
-    places_payload = st.session_state["ai_places_cache"].get(loc_key, {})
-    region_summary = places_payload.get("region_summary_ta", "")
+    contacts_payload = st.session_state["ai_contacts_cache"].get(loc_key, {})
+    region_summary = contacts_payload.get("region_summary_ta", "")
     if region_summary:
         st.markdown(f"🌐 **AI சுற்றளவு தகவல்:** {region_summary}")
 
-    places_list = places_payload.get("places", [])
-    if not places_list:
-        places_list = [
+    contacts_list = contacts_payload.get("contacts", [])
+    if not contacts_list:
+        contacts_list = [
             {
-                "title_ta": "அருகிலுள்ள முதியோர் இல்லம் & ஆசரமம்",
-                "category_ta": "உணவு தானம்",
-                "guidance_ta": "உங்கள் சுற்றளவில் உள்ள முதியோர் இல்லங்கள் அல்லது தான அமைப்புகளைத் தொடர்பு கொண்டு பாதுகாப்பாக வழங்கலாம்.",
-                "maps_search_query": "Ashram old age home food donation",
+                "organization_ta": "அருகிலுள்ள முதியோர் இல்லம் & ஆசரமத் தொடர்பு",
+                "category_ta": "முதியோர் இல்லம் / ஆசரமம்",
+                "area_note_ta": "உங்கள் GPS சுற்றியுள்ள பகுதி",
+                "contact_info_ta": "உங்கள் தொடர்பு எண்ணைச் சேர்க்கவும் / நேரடியாகத் தொடர்பு கொள்ளவும்",
+                "donation_note_ta": "உணவு நல்ல நிலையில் உள்ளதா என்பதை உறுதி செய்து தொடர்பு கொள்ளவும்.",
             },
             {
-                "title_ta": "உணவு வங்கி & ஆதரவற்றோர் இல்லம்",
-                "category_ta": "சமூக உதவி",
-                "guidance_ta": "உணவின் வெப்பநிலை மற்றும் தரத்தை உறுதி செய்த பிறகு அருகிலுள்ள இல்லங்களில் வழங்கலாம்.",
-                "maps_search_query": "Orphanage food donation center",
+                "organization_ta": "உணவு தானம் & ஆதரவற்றோர் இல்லத் தொடர்பு",
+                "category_ta": "உணவு தான அமைப்பு",
+                "area_note_ta": "உங்கள் GPS சுற்றியுள்ள பகுதி",
+                "contact_info_ta": "உங்கள் தொடர்பு எண்ணைச் சேர்க்கவும் / நேரடியாகத் தொடர்பு கொள்ளவும்",
+                "donation_note_ta": "உணவு வழங்குவதற்கு முன் சம்பந்தப்பட்ட இல்லத்திடம் நேரடியாகப் பேசி உறுதி செய்யவும்.",
             },
         ]
 
-    for idx, place in enumerate(places_list, start=1):
-        title_ta = place.get("title_ta", "சுற்றியுள்ள தான இடம்")
-        category_ta = place.get("category_ta", "உணவு தானம்")
-        guidance_ta = place.get("guidance_ta", "")
-        q_str = place.get("maps_search_query", "food donation ashram")
-        maps_url = build_maps_url(q_str, gps_coords=gps_coords, area_text=manual_area)
+    for idx, c_item in enumerate(contacts_list, start=1):
+        org_ta = c_item.get("organization_ta", "சுற்றியுள்ள தானத் தொடர்பு")
+        cat_ta = c_item.get("category_ta", "உணவு தானம்")
+        area_note = c_item.get("area_note_ta", "உங்கள் சுற்றியுள்ள பகுதி")
+        contact_info = c_item.get("contact_info_ta", "நேரடியாகத் தொடர்பு கொண்டு உறுதி செய்யவும்")
+        donation_note = c_item.get("donation_note_ta", "")
         with st.container(border=True):
-            st.markdown(f"**{idx}. {title_ta}**")
-            st.markdown(f"🏷️ **வகை:** `{category_ta}`")
-            if guidance_ta:
-                st.markdown(f"💡 **AI வழிகாட்டுதல்:** {guidance_ta}")
-            st.markdown(f"🗺️ [Google Maps-ல் அருகிலுள்ள இடங்களைத் தேடவும்]({maps_url})")
+            st.markdown(f"**{idx}. {org_ta}**")
+            st.markdown(f"🏷️ **வகை:** `{cat_ta}`")
+            st.markdown(f"📍 **பகுதி:** `{area_note}`")
+            st.markdown(f"📞 **தொடர்பு விவரம்:** `{contact_info}`")
+            if donation_note:
+                st.markdown(f"💡 **குறிப்பு:** {donation_note}")
 
 def prepare_fast_image(uploaded_file) -> Image.Image:
     img = Image.open(uploaded_file).convert("RGB")
@@ -370,7 +374,7 @@ if uploaded_file is not None:
             "சேர்க்கவும் அல்லது மேலே உள்ள 'Gemini API Key அமைப்பு' பகுதியில் தற்காலிகமாக உள்ளிடவும்."
         )
     else:
-        cache_key = f"{uploaded_file.name}_{uploaded_file.size}_ta_v14"
+        cache_key = f"{uploaded_file.name}_{uploaded_file.size}_ta_v15"
         if "ai_cache" not in st.session_state:
             st.session_state["ai_cache"] = {}
         if cache_key in st.session_state["ai_cache"]:
