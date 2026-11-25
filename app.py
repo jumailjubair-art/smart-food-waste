@@ -19,18 +19,36 @@ st.markdown(
 )
 st.divider()
 
+DONATION_CONTACTS = [
+    {
+        "name_ta": "அருகிலுள்ள முதியோர் இல்லம் / ஆசரமம்",
+        "area_ta": "உங்கள் சுற்றியுள்ள பகுதி",
+        "phone": "நீங்களே நேரடியாகத் தேடி / விசாரித்து உறுதி செய்து கொள்ளவும்",
+    },
+    {
+        "name_ta": "உணவு தானம் & ஆதரவற்றோர் இல்லம்",
+        "area_ta": "உங்கள் சுற்றியுள்ள பகுதி",
+        "phone": "நீங்களே நேரடியாகத் தேடி / விசாரித்து உறுதி செய்து கொள்ளவும்",
+    },
+]
+
 def render_donation_section(highlight_fresh: bool = False):
     st.subheader("🤝 சுற்றியுள்ள தானம் & ஆசரமத் தொடர்புகள்")
     if highlight_fresh:
         st.success(
-            "🍲 உணவு நல்ல தரத்தில் இருப்பதால், சுற்றியுள்ள ஆசரமம் அல்லது தான அமைப்புகளின் "
-            "தொடர்பு விவரங்களைப் பார்த்து பாதுகாப்பாக வழங்கலாம்!"
+            "🍲 உணவு நல்ல தரத்தில் இருப்பதால், சுற்றியுள்ள ஆசரமம் அல்லது தான அமைப்புகளைத் "
+            "தொடர்பு கொண்டு பாதுகாப்பாக வழங்கலாம்!"
         )
     else:
         st.caption(
-            "சுற்றியுள்ள தானம் & ஆசரமத் தொடர்புகள் (உறுதி செய்யப்பட்ட விவரங்கள் மட்டும்):"
+            "உணவு தானம் தொடர்பான சுற்றியுள்ள தொடர்புத் தகவல்:"
         )
-    st.info("சுற்றியுள்ள ஆசரமங்கள் அல்லது தான அமைப்புகளின் தொடர்பு எண்கள் சேமிக்கப்படவில்லை.")
+
+    for idx, item in enumerate(DONATION_CONTACTS, start=1):
+        with st.container(border=True):
+            st.markdown(f"**{idx}. {item['name_ta']}**")
+            st.markdown(f"📍 **பகுதி:** `{item['area_ta']}`")
+            st.markdown(f"📞 **தொடர்பு:** `{item['phone']}`")
 
 def prepare_fast_image(uploaded_file) -> Image.Image:
     img = Image.open(uploaded_file).convert("RGB")
@@ -159,7 +177,7 @@ if uploaded_file is not None:
             "சேர்க்கவும் அல்லது மேலே உள்ள 'Gemini API Key அமைப்பு' பகுதியில் தற்காலிகமாக உள்ளிடவும்."
         )
     else:
-        cache_key = f"{uploaded_file.name}_{uploaded_file.size}_ta_v20"
+        cache_key = f"{uploaded_file.name}_{uploaded_file.size}_ta_v21"
         if "ai_cache" not in st.session_state:
             st.session_state["ai_cache"] = {}
         if cache_key in st.session_state["ai_cache"]:
