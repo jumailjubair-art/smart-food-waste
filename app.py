@@ -20,7 +20,6 @@ st.markdown(
 )
 st.divider()
 
-# Browser GPS -> URL query params without needing a manual page reload
 GPS_SCRIPT_TEMPLATE = '''
 <script>
 (function() {
@@ -76,7 +75,6 @@ def get_api_key():
 def contains_tamil(text: str) -> bool:
     return bool(re.search(r"[\u0B80-\u0BFF]", text or ""))
 
-# Fast model priority list: avoids slow client.models.list() round-trips on every request
 FAST_MODELS = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-3.8-flash"]
 
 def call_gemini_json_fast(client, contents, prompt_text: str) -> dict:
@@ -170,7 +168,7 @@ def generate_ai_surrounding_contacts(api_key: str, gps_coords=None, area_text: s
         "Never invent fake phone numbers or fake addresses; use 'நேரடியாகத் தொடர்பு கொண்டு உறுதி செய்யவும் / உங்கள் தொடர்பு எண்ணைச் சேர்க்கவும்' for phone/contact. "
         "Do NOT include map links. "
         f"{food_desc}Location: {loc_desc}. "
-        "Return ONLY valid JSON: {\"region_summary_ta\": \"...\", \"contacts\": [{\"organization_ta\": \"...\", \"category_ta\": \"...\", \"area_note_ta\": \"...\", \"contact_info_ta\": \"...\", \"donation_note_ta\": \"...\"}]}"
+        "Return ONLY valid JSON with keys region_summary_ta and contacts (list of organization_ta, category_ta, area_note_ta, contact_info_ta, donation_note_ta)."
     )
 
     try:
@@ -283,7 +281,6 @@ def prepare_fast_image(uploaded_file) -> Image.Image:
     return Image.open(buf)
 
 def build_fast_food_fallback(image: Image.Image) -> dict:
-    # Lightweight color/brightness heuristic fallback if Gemini Flash hits load/errors
     small = image.resize((64, 64))
     pixels = list(small.getdata())
     avg_luma = sum(0.299 * r + 0.587 * g + 0.114 * b for r, g, b in pixels) / max(len(pixels), 1)
@@ -318,11 +315,8 @@ def analyze_food_with_ai(image: Image.Image, key: str) -> dict:
     client = get_genai_client(key)
     prompt = (
         "Write EVERY text value strictly in natural Tamil (தமிழ்) only. Do not use Hindi or 'தாஜா'. "
-        "Analyze food freshness briefly and accurately. Return ONLY valid JSON: "
-        '{"food_name_ta": "தமிழில் உணவுப் பெயர்", "freshness_score": 0 to 100 number, "
-        '"status": "FRESH" or "MODERATE" or "SPOILED", "
-        '"conclusion_ta": "தமிழில் சுருக்கமான முடிவு", "
-        '"recommendation_ta": "தானம் அல்லது உடனடி பயன்பாடு அல்லது உரம் பற்றிய தமிழ் பரிந்துரை"}'
+        "Analyze food freshness briefly and accurately. Return ONLY valid JSON with keys: "
+        "food_name_ta, freshness_score, status, conclusion_ta, recommendation_ta."
     )
     try:
         parsed = call_gemini_json_fast(client, [image, prompt], prompt)
@@ -354,7 +348,7 @@ if uploaded_file is not None:
     image = prepare_fast_image(uploaded_file)
     st.image(image, caption="பதிவேற்றப்பட்ட உணவுப் படம்", use_container_width=True)
 
-    cache_key = f"{uploaded_file.name}_{uploaded_file.size}_fast_v16"
+    cache_key = f"{uploaded_file.name}_{uploaded_file.size}_fast_v17"
     if "ai_cache" not in st.session_state:
         st.session_state["ai_cache"] = {}
 
