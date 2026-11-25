@@ -1,5 +1,6 @@
 import io
 import json
+import re
 import time
 import urllib.parse
 import streamlit as st
@@ -73,6 +74,10 @@ def get_genai_client(key: str):
     return genai.Client(api_key=key)
 
 
+def contains_tamil(text: str) -> bool:
+    return bool(re.search(r"[\u0B80-\u0BFF]", text or ""))
+
+
 st.header("📸 உணவுப் படம் மற்றும் AI ஃபிரெஷ்னஸ் பரிசோதனை")
 st.write("உணவுப் பொருளின் படத்தை இங்கே பதிவேற்றவும் (JPG/PNG)")
 
@@ -106,7 +111,10 @@ def analyze_food_with_ai(image: Image.Image, key: str) -> dict:
     client = get_genai_client(key)
 
     prompt = (
-        "Analyze food freshness briefly and accurately. Return ONLY valid JSON: "
+        "CRITICAL LANGUAGE RULE: Write EVERY text field strictly in natural Tamil script (தமிழ்). "
+        "Never use Hindi, Sanskrit, Telugu, Kannada, Malayalam, or English words in the values. "
+        "For example, use 'புதியது' / 'நல்ல நிலையில் உள்ளது' instead of 'தாஜா'.\n"
+        "Analyze the food image briefly and accurately for freshness. Return ONLY valid JSON:\n"
         '{"food_name_ta": "தமிழில் உணவுப் பெயர்", '
         '"freshness_score": 0 to 100 number, '
         '"status": "FRESH" or "MODERATE" or "SPOILED", '
@@ -144,7 +152,20 @@ def analyze_food_with_ai(image: Image.Image, key: str) -> dict:
                     config={"response_mime_type": "application/json"},
                 )
                 raw_text = (response.text or "").strip()
-                return json.loads(raw_text)
+                parsed = json.loads(raw_text)
+                if contains_tamil(str(parsed.get("conclusion_ta", ""))):
+                    return parsed
+                # தமிழ் வரவில்லை என்றால் ஒரு முறை மேலும் கறாராக முயற்சிக்கும்
+                retry_resp = client.models.generate_content(
+                    model=model_name,
+                    contents=[
+                        image,
+                        "Rewrite all text fields strictly in Tamil (தமிழ்) only. Return ONLY valid JSON with keys: "
+                        "food_name_ta, freshness_score, status, conclusion_ta, recommendation_ta.",
+                    ],
+                    config={"response_mime_type": "application/json"},
+                )
+                return json.loads((retry_resp.text or "").strip())
             except Exception as exc:
                 last_error = exc
                 err_str = str(exc)
@@ -168,14 +189,14 @@ if uploaded_file is not None:
             "சேர்க்கவும் அல்லது மேலே உள்ள 'Gemini API Key அமைப்பு' பகுதியில் தற்காலிகமாக உள்ளிடவும்."
         )
     else:
-        cache_key = f"{uploaded_file.name}_{uploaded_file.size}"
+        cache_key = f"{uploaded_file.name}_{uploaded_file.size}_ta_v12"
         if "ai_cache" not in st.session_state:
             st.session_state["ai_cache"] = {}
 
         if cache_key in st.session_state["ai_cache"]:
             result = st.session_state["ai_cache"][cache_key]
         else:
-            with st.spinner("⚡ வேகமாக AI பகுப்பாய்வு செய்கிறது..."):
+            with st.spinner("⚡ தமிழில் வேகமாக AI பகுப்பாய்வு செய்கிறது..."):
                 try:
                     result = analyze_food_with_ai(image, api_key)
                     st.session_state["ai_cache"][cache_key] = result
