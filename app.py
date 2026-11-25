@@ -114,10 +114,28 @@ def analyze_food_with_ai(image: Image.Image, key: str) -> dict:
         '"recommendation_ta": "தானம் அல்லது உடனடி பயன்பாடு அல்லது உரம் பற்றிய சுருக்கமான தமிழ் பரிந்துரை"}'
     )
 
-    models_to_try = ["gemini-3.8-flash", "gemini-flash-latest"]
+    dynamic_models = []
+    try:
+        for m in client.models.list():
+            m_name = getattr(m, "name", "")
+            clean_name = m_name.replace("models/", "") if m_name else ""
+            if "gemini" in clean_name and "flash" in clean_name:
+                if clean_name not in dynamic_models:
+                    dynamic_models.append(clean_name)
+    except Exception:
+        pass
+
+    candidate_models = []
+    for preferred in ["gemini-3.8-flash", "gemini-2.5-flash", "gemini-2.0-flash"]:
+        if preferred not in candidate_models:
+            candidate_models.append(preferred)
+    for dm in dynamic_models:
+        if dm not in candidate_models:
+            candidate_models.append(dm)
+
     last_error = None
 
-    for model_name in models_to_try:
+    for model_name in candidate_models:
         for attempt in range(2):
             try:
                 response = client.models.generate_content(
@@ -130,6 +148,8 @@ def analyze_food_with_ai(image: Image.Image, key: str) -> dict:
             except Exception as exc:
                 last_error = exc
                 err_str = str(exc)
+                if "404" in err_str or "NOT_FOUND" in err_str:
+                    break
                 if "503" in err_str or "UNAVAILABLE" in err_str or "429" in err_str:
                     time.sleep(0.5 * (attempt + 1))
                     continue
@@ -155,7 +175,7 @@ if uploaded_file is not None:
         if cache_key in st.session_state["ai_cache"]:
             result = st.session_state["ai_cache"][cache_key]
         else:
-            with st.spinner("⚡ Gemini 3.8 Flash மூலம் வேகமாக பகுப்பாய்வு செய்கிறது..."):
+            with st.spinner("⚡ வேகமாக AI பகுப்பாய்வு செய்கிறது..."):
                 try:
                     result = analyze_food_with_ai(image, api_key)
                     st.session_state["ai_cache"][cache_key] = result
