@@ -1,6 +1,8 @@
 import os
 import json
+import time
 import random
+import hashlib
 import datetime
 import streamlit as st
 from PIL import Image
@@ -32,9 +34,11 @@ st.markdown("""
 # Header
 st.markdown("<div class='main-header'><h1>🍊 Juju Food Donation & Freshness AI</h1><p>உணவு ஃபிரெஷ்னஸ் பரிசோதனை & எளிய உணவு தானத் திட்டம்</p></div>", unsafe_allow_html=True)
 
-# Initialize session state for donation records
+# Initialize session state
 if "juju_donations" not in st.session_state:
     st.session_state["juju_donations"] = []
+if "ai_cache" not in st.session_state:
+    st.session_state["ai_cache"] = {}
 
 # API Key Setup (supports Streamlit Secrets or Environment Variable)
 api_key = None
@@ -60,7 +64,7 @@ with st.sidebar:
 
 def analyze_food_with_ai(pil_image: Image.Image, key: str) -> dict:
     """
-    Analyzes food freshness using google-genai (Gemini Vision) with strict spoilage detection.
+    Analyzes food freshness using google-genai (Gemini Vision) with automatic retry on temporary 503 load spikes.
     """
     client = genai.Client(api_key=key)
     prompt = """
@@ -84,15 +88,30 @@ def analyze_food_with_ai(pil_image: Image.Image, key: str) -> dict:
     }
     """
 
-    response = client.models.generate_content(
-        model="gemini-3.8-flash",
-        contents=[pil_image, prompt],
-        config=types.GenerateContentConfig(
-            response_mime_type="application/json",
-            temperature=0.1,
-        ),
-    )
-    return json.loads(response.text)
+    models_to_try = ["gemini-3.8-flash", "gemini-2.5-flash"]
+    last_err = None
+
+    for model_name in models_to_try:
+        for attempt in range(2):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=[pil_image, prompt],
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.1,
+                    ),
+                )
+                return json.loads(response.text)
+            except Exception as e:
+                last_err = e
+                err_str = str(e)
+                if "503" in err_str or "UNAVAILABLE" in err_str:
+                    time.sleep(1.5 * (attempt + 1))
+                    continue
+                break
+
+    raise RuntimeError(f"{last_err}")
 
 
 def render_donation_scheme(status: str, freshness_score: int, food_label: str):
@@ -228,56 +247,74 @@ def render_compost_contacts(food_label: str, freshness_score: int, status: str):
             st.markdown(f"[📲 இப்போது அழைக்கவும் (Call)](tel:{partner['போன் எண்'].replace(' ', '')})")
 
 
-# --- MAIN CAMERA & UPLOAD SECTION ---
-st.subheader("📷 ஃபிரெஷ்னஸ் பரிசோதனை")
+# --- MAIN UPLOAD SECTION (Camera input removed) ---
+st.subheader("📤 உணவுப் படப் பதிவேற்றம்")
 
-# Live Phone Camera Input
-camera_photo = st.camera_input("உணவுப் பொருளை கேமராவில் காட்டிப் படம் எடுக்கவும்")
-
-# Gallery Upload Option as Backup
-gallery_photo = st.file_uploader(
-    "அல்லது கேலரியில் இருந்து உணவுப் படத்தை பதிவேற்றவும் (JPG/PNG)",
+uploaded_file = st.file_uploader(
+    "உணவுப் படத்தை இங்கே பதிவேற்றவும் (JPG/PNG)",
     type=["jpg", "jpeg", "png"],
 )
 
-# Mandatory bright photo note right below the upload/camera box
+# Mandatory bright photo note right below the upload box
 st.caption("📸 **Must take a bright photo** — நல்ல வெளிச்சத்தில் தெளிவாகப் படம் எடுக்கவும் (நிழல் அல்லது இருட்டு படங்களைத் தவிர்க்கவும்).")
 
-captured_image = camera_photo if camera_photo is not None else gallery_photo
+if uploaded_file is not None:
+    img_bytes = uploaded_file.getvalue()
+    img_hash = hashlib.md5(img_bytes).hexdigest()
 
-if captured_image is not None:
-    pil_img = Image.open(captured_image).convert("RGB")
+    pil_img = Image.open(uploaded_file).convert("RGB")
     st.image(pil_img, caption="பரிசோதனைக்குத் தேர்ந்தெடுக்கப்பட்ட உணவுப் படம்", use_container_width=True)
 
     if not api_key:
         st.error("⚠️ இடதுபுற சைட்பாரில் (Sidebar) அல்லது Streamlit Secrets-ல் `GEMINI_API_KEY` சேர்க்கவும்.")
     else:
-        with st.spinner("🤖 Juju AI உணவின் தரத்தை ஆராய்கிறது..."):
-            try:
-                result = analyze_food_with_ai(pil_img, api_key)
-                food_label = result.get("food_name_tamil", "உணவுப் பொருள்")
-                status = str(result.get("status", "UNCERTAIN")).upper()
-                score = int(result.get("freshness_score", 0))
-                observation = result.get("observation_tamil", "")
+        re_scan = st.button("🔄 மீண்டும் AI பரிசோதனை செய் (Re-scan)")
+        if re_scan and img_hash in st.session_state["ai_cache"]:
+            del st.session_state["ai_cache"][img_hash]
 
-                st.markdown("### 📊 பரிசோதனை முடிவு")
-                col_a, col_b = st.columns(2)
-                col_a.metric("உணவு நிலை (Status)", status)
-                col_b.metric("ஃப்ரெஷ்னஸ் ஸ்கோர்", f"{score}%")
-                st.write(f"**உணவு:** {food_label}")
-                if observation:
-                    st.write(f"**AI கவனிப்பு:** {observation}")
+        if img_hash not in st.session_state["ai_cache"]:
+            with st.spinner("🤖 Juju AI உணவின் தரத்தை ஆராய்கிறது..."):
+                try:
+                    st.session_state["ai_cache"][img_hash] = analyze_food_with_ai(pil_img, api_key)
+                except Exception as e:
+                    st.session_state["ai_cache"][img_hash] = {"_error": str(e)}
 
-                # Route based on freshness status & 60% safety threshold
-                if status == "FRESH" and score >= 60:
-                    render_donation_scheme(status, score, food_label)
-                else:
-                    render_compost_contacts(food_label, score, status)
+        cached_res = st.session_state["ai_cache"].get(img_hash, {})
+        if "_error" in cached_res:
+            err_msg = cached_res["_error"]
+            if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
+                st.error(
+                    "⚠️ **இன்றைய இலவச AI பயன்பாட்டு வரம்பு (Free Tier Quota) முடிந்துவிட்டது.** "
+                    "கொஞ்ச நேரம் கழித்தோ அல்லது சைட்பாரில் வேறொரு Gemini API Key கொடுத்தோ முயற்சிக்கவும்."
+                )
+            elif "503" in err_msg or "UNAVAILABLE" in err_msg:
+                st.warning(
+                    "⏳ **Google AI சர்வரில் தற்காலிக நெரிசல் (503) உள்ளது.** "
+                    "ஒரு நிமிடம் கழித்து 'மீண்டும் AI பரிசோதனை செய்' பட்டனை அழுத்தி முயற்சிக்கவும்."
+                )
+            else:
+                st.error(f"AI பரிசோதனையில் பிழை ஏற்பட்டது: {err_msg}")
+        elif cached_res:
+            food_label = cached_res.get("food_name_tamil", "உணவுப் பொருள்")
+            status = str(cached_res.get("status", "UNCERTAIN")).upper()
+            score = int(cached_res.get("freshness_score", 0))
+            observation = cached_res.get("observation_tamil", "")
 
-            except Exception as e:
-                st.error(f"AI பரிசோதனையில் பிழை ஏற்பட்டது: {e}")
+            st.markdown("### 📊 பரிசோதனை முடிவு")
+            col_a, col_b = st.columns(2)
+            col_a.metric("உணவு நிலை (Status)", status)
+            col_b.metric("ஃப்ரெஷ்னஸ் ஸ்கோர்", f"{score}%")
+            st.write(f"**உணவு:** {food_label}")
+            if observation:
+                st.write(f"**AI கவனிப்பு:** {observation}")
+
+            # Route based on freshness status & 60% safety threshold
+            if status == "FRESH" and score >= 60:
+                render_donation_scheme(status, score, food_label)
+            else:
+                render_compost_contacts(food_label, score, status)
 else:
-    st.info("💡 மேலே உள்ள கேமரா அல்லது அப்லோட் பட்டனைப் பயன்படுத்தி ஒரு உணவுப் படத்தை எடுக்கவும் ப்ரோ!")
+    st.info("💡 மேலே உள்ள அப்லோட் பட்டனைப் பயன்படுத்தி ஒரு உணவுப் படத்தைப் பதிவேற்றவும் ப்ரோ!")
 
 # Display today's donation records if any exist
 if st.session_state["juju_donations"]:
