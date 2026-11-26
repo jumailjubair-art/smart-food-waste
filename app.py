@@ -181,6 +181,7 @@ def render_donation_scheme(freshness_score: int, food_label: str, is_manual: boo
     """
     Renders the Juju Food Donation Scheme form and token generator.
     """
+    form_key = "juju_donation_form_manual" if is_manual else "juju_donation_form_auto"
     st.markdown("---")
     st.subheader("🤝 ஜூஜூ (Juju) உணவு தானத் திட்டம் (Donation Scheme)")
     if is_manual:
@@ -191,7 +192,7 @@ def render_donation_scheme(freshness_score: int, food_label: str, is_manual: boo
             "கீழே உள்ள படிவத்தை நிரப்பி உடனே தானப் பதிவை உருவாக்கலாம்."
         )
 
-    with st.form("juju_donation_form", clear_on_submit=True):
+    with st.form(form_key, clear_on_submit=True):
         donor_name = st.text_input("உங்கள் பெயர் *", placeholder="எ.கா. ஜுமைல் / ஜூஜூ தன்னார்வலர்")
         col1, col2 = st.columns(2)
         with col1:
