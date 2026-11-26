@@ -1,4 +1,5 @@
 import os
+import io
 import json
 import time
 import random
@@ -51,6 +52,15 @@ except Exception:
 if not api_key:
     api_key = os.environ.get("GEMINI_API_KEY")
 
+AVAILABLE_MODELS = [
+    "gemini-2.5-flash-lite",
+    "gemini-2.0-flash",
+    "gemini-2.0-flash-lite",
+    "gemini-2.5-pro",
+    "gemini-1.5-flash",
+    "gemini-3.8-flash",
+]
+
 with st.sidebar:
     st.header("⚙️ Juju அமைப்புகள்")
     if not api_key:
@@ -59,12 +69,62 @@ with st.sidebar:
             api_key = manual_key
     else:
         st.success("✅ Gemini AI இணைக்கப்பட்டுள்ளது")
+
+    selected_model = st.selectbox(
+        "🤖 AI மாடல் வெர்ஷன் தேர்வு",
+        ["Auto (தானாகவே வேலை செய்யும் வெர்ஷன்)"] + AVAILABLE_MODELS,
+        index=0,
+    )
     st.info("🏢 **நிறுவனம்:** Juju Food Donation\n\nஉணவை வீணாக்காமல் பகிர்வோம்!")
 
 
-def analyze_food_with_ai(pil_image: Image.Image, key: str) -> dict:
+def get_candidate_models(client: genai.Client, user_choice: str) -> list:
     """
-    Analyzes food freshness using google-genai (Gemini Vision) with fallback models and retry.
+    Returns an ordered list of working vision-capable Gemini models,
+    prioritizing user choice and dynamically discovering active models from the API key.
+    """
+    if user_choice != "Auto (தானாகவே வேலை செய்யும் வெர்ஷன்)":
+        others = [m for m in AVAILABLE_MODELS if m != user_choice]
+        return [user_choice] + others
+
+    discovered = []
+    try:
+        for m in client.models.list():
+            name = getattr(m, "name", "") or ""
+            if name.startswith("models/"):
+                name = name.replace("models/", "", 1)
+            methods = getattr(m, "supported_generation_methods", None) or getattr(m, "supported_actions", None) or []
+            if "gemini" in name.lower() and "embedding" not in name.lower() and "aqa" not in name.lower():
+                if not methods or "generateContent" in methods:
+                    discovered.append(name)
+    except Exception:
+        pass
+
+    # Prioritize fast, non-3.8 models first, then discovered models, with 3.8 as last resort
+    priority_order = [
+        "gemini-2.5-flash-lite",
+        "gemini-2.0-flash",
+        "gemini-2.0-flash-lite",
+        "gemini-2.5-flash",
+        "gemini-1.5-flash",
+        "gemini-2.5-pro",
+    ]
+    ordered = []
+    for p in priority_order:
+        if p not in ordered:
+            ordered.append(p)
+    for d in discovered:
+        if d not in ordered and "3.8" not in d:
+            ordered.append(d)
+    if "gemini-3.8-flash" not in ordered:
+        ordered.append("gemini-3.8-flash")
+    return ordered
+
+
+def analyze_food_with_ai(pil_image: Image.Image, key: str, user_choice: str) -> dict:
+    """
+    Analyzes food freshness using google-genai with automatic multi-version fallback
+    (skips 503 overloaded or 404 unavailable models automatically).
     """
     client = genai.Client(api_key=key)
     prompt = """
@@ -88,37 +148,31 @@ def analyze_food_with_ai(pil_image: Image.Image, key: str) -> dict:
     }
     """
 
-    models_to_try = ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-3.8-flash"]
+    models_to_try = get_candidate_models(client, user_choice)
     last_err = None
 
     for model_name in models_to_try:
-        for attempt in range(2):
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=[pil_image, prompt],
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        temperature=0.1,
-                    ),
-                )
-                raw_text = (response.text or "").strip()
-                if raw_text.startswith("```"):
-                    raw_text = raw_text.strip("`")
-                    if raw_text.lower().startswith("json"):
-                        raw_text = raw_text[4:].strip()
-                return json.loads(raw_text)
-            except Exception as e:
-                last_err = e
-                err_str = str(e)
-                if "503" in err_str or "UNAVAILABLE" in err_str:
-                    time.sleep(1.2 * (attempt + 1))
-                    continue
-                if "404" in err_str or "NOT_FOUND" in err_str:
-                    break
-                if "429" in err_str or "RESOURCE_EXHAUSTED" in err_str:
-                    break
-                break
+        try:
+            response = client.models.generate_content(
+                model=model_name,
+                contents=[pil_image, prompt],
+                config=types.GenerateContentConfig(
+                    response_mime_type="application/json",
+                    temperature=0.1,
+                ),
+            )
+            raw_text = (response.text or "").strip()
+            if raw_text.startswith("```"):
+                raw_text = raw_text.strip("`")
+                if raw_text.lower().startswith("json"):
+                    raw_text = raw_text[4:].strip()
+            parsed = json.loads(raw_text)
+            parsed["_used_model"] = model_name
+            return parsed
+        except Exception as e:
+            last_err = e
+            # Immediately move to the next model version on 503, 404, 429, or any model-specific error
+            continue
 
     raise RuntimeError(f"{last_err}")
 
@@ -259,7 +313,7 @@ def render_compost_contacts(food_label: str, freshness_score: int, status: str):
             st.markdown(f"[📲 இப்போது அழைக்கவும் (Call)](tel:{partner['போன் எண்'].replace(' ', '')})")
 
 
-# --- QUICK ACTION BUTTONS (Donation Scheme always accessible too) ---
+# --- QUICK ACTION BUTTONS ---
 col_btn1, col_btn2 = st.columns(2)
 with col_btn1:
     show_direct_donation = st.toggle("🤝 உணவு தானப் படிவம் திற (Donation Scheme)", value=False)
@@ -290,29 +344,27 @@ if uploaded_file is not None:
         if not img_bytes:
             st.error("❌ ஃபைல் காலியாக (0 bytes) உள்ளது. வேறொரு படத்தைத் தேர்ந்தெடுக்கவும்.")
         else:
-            img_hash = hashlib.md5(img_bytes).hexdigest()
-            import io
+            cache_key = f"{hashlib.md5(img_bytes).hexdigest()}_{selected_model}"
             pil_img = Image.open(io.BytesIO(img_bytes)).convert("RGB")
-            # Resize large mobile photos slightly for fast upload & reliable AI vision
             pil_img.thumbnail((1280, 1280))
 
             st.image(pil_img, caption="பரிசோதனைக்குத் தேர்ந்தெடுக்கப்பட்ட உணவுப் படம்", use_container_width=True)
 
             if not api_key:
-                st.warning("⚠️ AI பரிசோதனைக்கு இடதுபுற சைட்பாரில் (Sidebar) அல்லது Streamlit Secrets-ல் `GEMINI_API_KEY` கொடுக்கவும். (மேலே உள்ள toggle மூலம் தானப் படிவத்தையும் பயன்படுத்தலாம்.)")
+                st.warning("⚠️ AI பரிசோதனைக்கு இடதுபுற சைட்பாரில் (Sidebar) அல்லது Streamlit Secrets-ல் `GEMINI_API_KEY` கொடுக்கவும்.")
             else:
                 re_scan = st.button("🔄 மீண்டும் AI பரிசோதனை செய் (Re-scan)")
-                if re_scan and img_hash in st.session_state["ai_cache"]:
-                    del st.session_state["ai_cache"][img_hash]
+                if re_scan and cache_key in st.session_state["ai_cache"]:
+                    del st.session_state["ai_cache"][cache_key]
 
-                if img_hash not in st.session_state["ai_cache"]:
-                    with st.spinner("🤖 Juju AI உணவின் தரத்தை ஆராய்கிறது..."):
+                if cache_key not in st.session_state["ai_cache"]:
+                    with st.spinner("🤖 Juju AI பல வெர்ஷன்களில் சோதித்து உணவின் தரத்தை ஆராய்கிறது..."):
                         try:
-                            st.session_state["ai_cache"][img_hash] = analyze_food_with_ai(pil_img, api_key)
+                            st.session_state["ai_cache"][cache_key] = analyze_food_with_ai(pil_img, api_key, selected_model)
                         except Exception as e:
-                            st.session_state["ai_cache"][img_hash] = {"_error": str(e)}
+                            st.session_state["ai_cache"][cache_key] = {"_error": str(e)}
 
-                cached_res = st.session_state["ai_cache"].get(img_hash, {})
+                cached_res = st.session_state["ai_cache"].get(cache_key, {})
                 if "_error" in cached_res:
                     err_msg = cached_res["_error"]
                     if "429" in err_msg or "RESOURCE_EXHAUSTED" in err_msg:
@@ -322,8 +374,8 @@ if uploaded_file is not None:
                         )
                     elif "503" in err_msg or "UNAVAILABLE" in err_msg:
                         st.warning(
-                            "⏳ **Google AI சர்வரில் தற்காலிக நெரிசல் (503) உள்ளது.** "
-                            "கொஞ்ச நேரம் கழித்து 'மீண்டும் AI பரிசோதனை செய்' பட்டனை அழுத்தி முயற்சிக்கவும்."
+                            "⏳ **அனைத்து AI மாடல்களிலும் தற்காலிக நெரிசல் (503) உள்ளது.** "
+                            "சிறிது நேரம் கழித்து 'மீண்டும் AI பரிசோதனை செய்' பட்டனை அழுத்தி முயற்சிக்கவும்."
                         )
                     else:
                         st.error(f"AI பரிசோதனையில் பிழை ஏற்பட்டது: {err_msg}")
@@ -332,8 +384,11 @@ if uploaded_file is not None:
                     status = str(cached_res.get("status", "UNCERTAIN")).upper()
                     score = int(cached_res.get("freshness_score", 0))
                     observation = cached_res.get("observation_tamil", "")
+                    used_model = cached_res.get("_used_model", "")
 
                     st.markdown("### 📊 பரிசோதனை முடிவு")
+                    if used_model:
+                        st.caption(f"⚙️ பயன்படுத்தப்பட்ட AI வெர்ஷன்: `{used_model}`")
                     col_a, col_b = st.columns(2)
                     col_a.metric("உணவு நிலை (Status)", status)
                     col_b.metric("ஃப்ரெஷ்னஸ் ஸ்கோர்", f"{score}%")
